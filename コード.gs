@@ -5,10 +5,10 @@ const SHEET_MEETINGS = '会議マスタ';
 function doGet(e) {
   const template = HtmlService.createTemplateFromFile('index');
   template.token = e.parameter.token || ''; 
-  template.mode = e.parameter.paruparu || 'user'; // カスタム設定を引き継ぎ
+  template.mode = e.parameter.sample || 'user'; // カスタム設定を引き継ぎ
   
   return template.evaluate()
-    .setTitle(template.mode === '888' ? '【スタッフ用】受付システム' : '二次元コード発行')
+    .setTitle(template.mode === 'value' ? '【スタッフ用】受付システム' : '二次元コード発行')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
