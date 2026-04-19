@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #333; }
+    .screen { display: none; }
+    .active { display: block; animation: fadeIn 0.3s; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    
+    button { padding: 14px 20px; margin: 8px 0; width: 100%; font-size: 16px; cursor: pointer; border-radius: 8px; font-weight: bold;}
+    .btn-primary { background-color: #4285f4; border: none; color: white; }
+    .btn-danger { background-color: #ea4335; border: none; color: white; }
+    .btn-success { background-color: #34a853; border: none; color: white; }
+    .btn-warning { background-color: #fbbc04; border: none; color: #333; }
+    
+    select, input[type="file"] { padding: 14px; width: 100%; margin-bottom: 15px; font-size: 16px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
+    .info-box { background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #d2e3fc;}
+    .alert-box { background-color: #fce8e6; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #fad2cf; margin-top:30px;}
+    .notice { font-size: 14px; color: #d93025; font-weight: bold; background: #fce8e6; padding: 10px; border-radius: 6px; border: 1px solid #fad2cf;}
+    .staff-section { margin-top: 40px; padding-top: 20px; border-top: 2px dashed #ccc; }
+  </style>
+</head>
+<body>
+
+  <? if (token) { ?>
+    <div id="processing" class="screen active" style="text-align:center; padding-top: 50px;">
+      <h2>⏳ 受付処理中...</h2>
+    </div>
+
+    <div id="scan-result" class="screen" style="text-align:center; padding-top: 30px;">
+      <div id="scanResultData"></div>
+      <p style="margin-top:30px; font-size:14px; font-weight:bold;">※確認後、このタブは閉じてください</p>
+    </div>
+
+    <div id="warning" class="screen">
+      <div class="alert-box">
+        <h2 style="color:#d93025; margin-top:0;">⚠️ 受付エラー</h2>
+        <p style="font-size: 16px; color: #3c4043; text-align: left;">
+          この画面を自分で開いても出席にはなりません。<br><br>
+          受付を完了させるには、発行された<strong>二次元コードを受付スタッフに提示</strong>し、読み取ってもらってください。
+        </p>
+      </div>
+    </div>
+
+    <script>
+      window.onload = function() {
+        const urlToken = "<?= token ?>";
+        const isStaff = localStorage.getItem('isStaffMode');
+
+        if (isStaff === 'true') {
+          google.script.run.withSuccessHandler(function(res) {
+            document.getElementById('processing').classList.remove('active');
+            document.getElementById('scan-result').classList.add('active');
+            const resDiv = document.getElementById('scanResultData');
+            
+            if (res.success) {
+              resDiv.innerHTML = `
+                <h1 style="color:green;">✅ 受付完了</h1>
+                <div style="background:#e8f0fe; padding:20px; border-radius:10px; margin-top:20px;">
+                  <h2 style="margin:0; color:#1a73e8;">${res.org}</h2>
+                  <p style="font-size:18px; font-weight:bold; margin-top:10px;">${res.rep} 様</p>
+                </div>
+                <p style="margin-top:20px; color:#666;">対象会議: ${res.meeting}</p>
+              `;
+            } else {
+              resDiv.innerHTML = `<h2 style="color:red;">❌ エラー</h2><p style="white-space: pre-line;">${res.message}</p>`;
+            }
+          }).recordAttendance(urlToken);
+        } else {
+          document.getElementById('processing').classList.remove('active');
+          document.getElementById('warning').classList.add('active');
+        }
+      };
+    </script>
+
+  <? } else if (mode === '888') { ?>
+    <div id="admin" class="screen active">
+      <h3 style="border-bottom: 2px solid #34a853; padding-bottom: 5px;">【スタッフ専用】受付の準備</h3>
+      
+      <div class="info-box">
+        <div style="font-size: 14px; color: #5f6368;">現在の受付ステータス：</div>
+        <div id="currentMeeting" style="font-size: 18px; font-weight: bold; color: #1a73e8; margin-top: 5px;">読込中...</div>
+      </div>
+
+      <label>受付を開始する「会議名」を選択：</label>
+      <select id="meetingSelect"><option value="">読込中...</option></select>
+      
+      <button class="btn-success" onclick="startReception()">この会議の受付を開始する</button>
+      <button class="btn-warning" onclick="stopReception()" style="margin-top: 10px;">受付モードを終了する</button>
+
+      <div class="staff-section" id="photoReceptionSection" style="display:none;">
+        <h3 style="border-bottom: 2px solid #4285f4; padding-bottom: 5px;">📷 写真から受付</h3>
+        <p style="font-size: 14px; color: #5f6368;">
+          標準カメラアプリがうまく起動しない場合、ここから二次元コードを撮影・選択して受付できます。
+        </p>
+        
+        <input type="file" id="qrFileInput" accept="image/*" capture="environment">
+        <canvas id="qrCanvas" style="display:none;"></canvas>
+        
+        <div id="photoScanResult" style="margin-top: 15px; font-weight: bold; text-align: center; white-space: pre-line;"></div>
+      </div>
+
+      <div class="staff-section">
+        <h3 style="border-bottom: 2px solid #ea4335; padding-bottom: 5px;">🔄 トラブル対応：二次元コード再発行</h3>
+        <p style="font-size: 14px; color: #5f6368;">
+          参加者がQRを紛失した、または誤って他団体を発行してしまった場合などに強制再発行を行います。<br>
+          <span style="color:#d93025; font-weight:bold;">※再発行すると以前の二次元コードは無効になります。</span>
+        </p>
+
+        <label>対象の団体を選択：</label>
+        <select id="staffOrgSelect"><option value="">読込中...</option></select>
+        <button class="btn-danger" onclick="reissueByStaff()">選択した団体のQRを再発行する</button>
+
+        <div id="staffReissueResult" style="margin-top: 20px; font-weight: bold; text-align: center; white-space: pre-line;"></div>
+        <div id="staffQrContainer" style="margin-top: 20px; text-align: center;"></div>
+      </div>
+    </div>
+
+    <script>
+      window.onload = function() {
+        const mSelect = document.getElementById('meetingSelect');
+        mSelect.innerHTML = '<option value="">▼ 会議を選択してください</option>';
+        google.script.run.withSuccessHandler(function(data) {
+          data.forEach(meeting => {
+            let opt = document.createElement('option'); opt.value = meeting; opt.text = meeting; mSelect.appendChild(opt);
+          });
+        }).getMeetings();
+
+        loadStaffRoster();
+
+        google.script.run.withSuccessHandler(function(activeMeeting) {
+          updateAdminStatus(activeMeeting);
+        }).getActiveMeeting();
+      };
+
+      function updateAdminStatus(activeMeeting) {
+        const statusDiv = document.getElementById('currentMeeting');
+        const photoSection = document.getElementById('photoReceptionSection');
+        
+        if (activeMeeting) {
+          statusDiv.innerText = `受付中：${activeMeeting}`; 
+          statusDiv.style.color = '#34a853';
+          photoSection.style.display = 'block'; // 受付中のみ写真受付UIを表示
+        } else {
+          statusDiv.innerText = '停止中（受付準備を行ってください）'; 
+          statusDiv.style.color = '#d93025';
+          photoSection.style.display = 'none';
+        }
+      }
+
+      function startReception() {
+        const meeting = document.getElementById('meetingSelect').value;
+        if (!meeting) { alert('会議名を選択してください'); return; }
+
+        const btn = event.target;
+        btn.innerText = '処理中...';
+        btn.disabled = true;
+
+        google.script.run.withSuccessHandler(function(savedMeeting) {
+          localStorage.setItem('isStaffMode', 'true');
+          alert(`「${savedMeeting}」の受付モードを開始しました。\n標準カメラ、または「写真から受付」を使用して受付を行ってください。`);
+          btn.innerText = 'この会議の受付を開始する';
+          btn.disabled = false;
+          updateAdminStatus(savedMeeting);
+        }).setActiveMeeting(meeting);
+      }
+
+      function stopReception() {
+        const btn = event.target;
+        btn.innerText = '処理中...';
+        btn.disabled = true;
+
+        google.script.run.withSuccessHandler(function() {
+          alert('受付モードを終了しました。');
+          btn.innerText = '受付モードを終了する';
+          btn.disabled = false;
+          updateAdminStatus('');
+        }).setActiveMeeting('');
+      }
+
+      function loadStaffRoster() {
+        const select = document.getElementById('staffOrgSelect');
+        select.innerHTML = '<option value="">▼ 団体を選択してください</option>';
+        google.script.run.withSuccessHandler(function(data) {
+          data.forEach(item => {
+            let opt = document.createElement('option');
+            opt.value = item.id;
+            let status = item.isIssued ? '✅ 発行済' : '❌ 未発行';
+            opt.text = `[${status}] ${item.org} - ${item.rep}`;
+            select.appendChild(opt);
+          });
+        }).getStaffRoster();
+      }
+
+      function reissueByStaff() {
+        const orgId = document.getElementById('staffOrgSelect').value;
+        if (!orgId) { alert('団体を選択してください'); return; }
+        if (!confirm("本当に再発行しますか？\n※古い二次元コードは無効になり、新しいQRが登録メールに送信されます。")) return;
+
+        const resultDiv = document.getElementById('staffReissueResult');
+        resultDiv.innerText = '再発行処理中...';
+        resultDiv.style.color = '#333';
+        document.getElementById('staffQrContainer').innerHTML = ''; 
+
+        google.script.run.withSuccessHandler(function(res) {
+          if (res.success) {
+            resultDiv.innerText = '✅ 再発行が完了しました。\n参加者のメールに送信されました。\nまた、その場で参加者のスマホで下のQRを読み取ってもらうか、撮影してもらうことも可能です。';
+            resultDiv.style.color = 'green';
+            document.getElementById('staffQrContainer').innerHTML = `<img src="${res.qrUrl}" alt="QR Code" style="border: 1px solid #ccc; padding: 10px; border-radius: 8px; background: white; width: 200px;">`;
+            loadStaffRoster(); 
+          } else {
+            resultDiv.innerText = `❌ ${res.message}`;
+            resultDiv.style.color = 'red';
+          }
+        }).reissueQRCodeByStaff(orgId);
+      }
+
+      // --- ★新機能：画像からQRコードを解析する処理 ---
+      document.getElementById('qrFileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const resultDiv = document.getElementById('photoScanResult');
+        resultDiv.innerHTML = '画像を解析中...⏳';
+        resultDiv.style.color = '#333';
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const img = new Image();
+          img.onload = function() {
+            const canvas = document.getElementById('qrCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 巨大な画像でブラウザがフリーズするのを防ぐためのリサイズ処理
+            const MAX_SIZE = 800;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) {
+              if (width > MAX_SIZE) {
+                height *= MAX_SIZE / width;
+                width = MAX_SIZE;
+              }
+            } else {
+              if (height > MAX_SIZE) {
+                width *= MAX_SIZE / height;
+                height = MAX_SIZE;
+              }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // 画像データからQRコードを解析
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: "dontInvert",
+            });
+
+            if (code) {
+              // QRコードの中身(URL)から、パラメーター(token)だけを抽出
+              try {
+                let urlObj = new URL(code.data);
+                let extractedToken = urlObj.searchParams.get('token');
+                
+                if(extractedToken) {
+                  resultDiv.innerHTML = '受付サーバーと通信中...📡';
+                  // 抽出したトークンをサーバーに送って出欠記録
+                  google.script.run.withSuccessHandler(function(res) {
+                    if (res.success) {
+                      resultDiv.innerHTML = `<span style="color:green; font-size:18px;">✅ 受付完了</span><br><br><span style="background:#e8f0fe; padding:10px; border-radius:5px; display:inline-block;"><b>${res.org}</b><br>${res.rep} 様</span>`;
+                    } else {
+                      resultDiv.innerHTML = `<span style="color:red;">❌ エラー</span><br>${res.message}`;
+                    }
+                  }).recordAttendance(extractedToken);
+                } else {
+                  resultDiv.innerHTML = '<span style="color:red;">❌ 無効な二次元コードです</span>';
+                }
+              } catch(err) {
+                 resultDiv.innerHTML = '<span style="color:red;">❌ システム用の二次元コードではありません</span>';
+              }
+            } else {
+              resultDiv.innerHTML = '<span style="color:#d93025;">❌ 二次元コードを検出できませんでした。<br>明るい場所で撮影し直すか、ピンボケに注意してください。</span>';
+            }
+            
+            // 連続で同じファイルを読み込めるようにinputをリセット
+            document.getElementById('qrFileInput').value = '';
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    </script>
+
+  <? } else { ?>
+    <div id="generate" class="screen active">
+      <h3 style="border-bottom: 2px solid #4285f4; padding-bottom: 5px;">参加用二次元コード発行</h3>
+      
+      <div id="formContainer">
+        <div class="notice">
+          <p style="margin: 0 0 5px 0;">※なりすまし防止のため、発行は1端末につき1回（自団体のみ）です。</p>
+          <p style="margin: 0;">※自分の団体が表示されない場合や、エラーで発行できない場合は、受付スタッフまたは mepo.jimukyoku@gmail.com までご連絡ください。</p>
+        </div>
+        <br>
+        <label>ご自身の団体を選択してください：</label>
+        <select id="orgSelect"><option value="">データを読み込み中...</option></select>
+        <button id="issueBtn" class="btn-danger" style="display:none; margin-top: 20px;" onclick="issueQR()">発行する</button>
+      </div>
+      
+      <div id="issueResult" style="margin-top: 20px; font-weight: bold; text-align: center; white-space: pre-line;"></div>
+      <div id="qrContainer" style="margin-top: 20px; text-align: center;"></div>
+    </div>
+
+    <script>
+      window.onload = function() {
+        const isIssued = localStorage.getItem('isIssuedFlag');
+        
+        if (isIssued) {
+          document.getElementById('formContainer').style.display = 'none';
+          document.getElementById('issueResult').innerHTML = `
+            <div style="background:#fce8e6; padding:20px; border-radius:8px; border:1px solid #fad2cf; text-align:left;">
+              <h3 style="color:#d93025; margin-top:0;">⚠️ すでに発行済みです</h3>
+              <p style="color:#3c4043; font-size:15px;">
+                この端末からは、すでに二次元コードの発行手続きが行われています。<br>
+                当日の受付には、<strong>ご登録のメールアドレス宛に送信された控えの二次元コード</strong>をご提示ください。
+              </p>
+              <div style="background:#fff; padding:10px; border-radius:4px; margin-top:15px; border:1px dashed #d93025;">
+                <p style="color:#d93025; font-weight:bold; font-size:14px; margin:0;">
+                  【！ご注意！】<br>
+                  誤って他団体の二次元コードを発行してしまった場合や、メールが届かない場合は、この画面からは再発行できません。<br>
+                  <strong>必ず受付スタッフまたは mepo.jimukyoku@gmail.com までご連絡ください。</strong>
+                </p>
+              </div>
+            </div>
+          `;
+        } else {
+          const select = document.getElementById('orgSelect');
+          select.innerHTML = '<option value="">団体を選択してください</option>';
+          google.script.run.withSuccessHandler(function(data) {
+            data.forEach(item => {
+              let opt = document.createElement('option'); 
+              opt.value = item.id; 
+              opt.text = item.org; 
+              select.appendChild(opt);
+            });
+            select.onchange = function() { document.getElementById('issueBtn').style.display = this.value ? 'block' : 'none'; };
+          }).getRoster();
+        }
+      };
+
+      function issueQR() {
+        const orgId = document.getElementById('orgSelect').value;
+        if (!orgId || !confirm("発行してよろしいですか？\n※一度発行すると、この端末で他の団体は選択できなくなります。")) return;
+
+        document.getElementById('issueBtn').style.display = 'none';
+        document.getElementById('issueResult').innerText = '発行処理中...';
+        document.getElementById('issueResult').style.color = '#333';
+
+        google.script.run.withSuccessHandler(function(res) {
+          if (res.success) {
+            localStorage.setItem('isIssuedFlag', 'true');
+            document.getElementById('formContainer').style.display = 'none';
+            document.getElementById('issueResult').innerText = '✅ 発行が完了しました\n登録メールアドレスに控えを送信しました。\n※念のためこの画面をスクリーンショットで保存してください。';
+            document.getElementById('issueResult').style.color = 'green';
+            document.getElementById('qrContainer').innerHTML = `<img src="${res.qrUrl}" alt="QR Code" style="border: 1px solid #ccc; padding: 10px; border-radius: 8px; background: white;">`;
+          } else {
+            document.getElementById('issueResult').innerText = `❌ ${res.message}`;
+            document.getElementById('issueResult').style.color = 'red';
+            document.getElementById('issueBtn').style.display = 'block';
+          }
+        }).issueQRCode(orgId);
+      }
+    </script>
+  <? } ?>
+
+</body>
+</html>
